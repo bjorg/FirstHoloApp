@@ -3,79 +3,75 @@ using SharpDX.Direct3D11;
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
-using System.Threading;
 using Windows.Graphics.DirectX.Direct3D11;
 using Windows.Graphics.Holographic;
 
-namespace FirstHoloApp.Common
-{
+namespace FirstHoloApp.Common {
+
     /// <summary>
     /// Controls all the DirectX device resources.
     /// </summary>
-    internal class DeviceResources : Disposer
-    {
+    internal class DeviceResources : Disposer {
+
         // Notifies the application that owns DeviceResources when the Direct3D device is lost.
         public event EventHandler DeviceLost;
-        
+
         // Notifies the application that owns DeviceResources when the Direct3D device is restored.
         public event EventHandler DeviceRestored;
-        
+
         // Direct3D objects.
-        private Device3                         d3dDevice;
-        private DeviceContext3                  d3dContext;
-        private SharpDX.DXGI.Adapter3           dxgiAdapter;
+        private Device3 _d3DDevice;
+        private DeviceContext3 _d3DContext;
+        private SharpDX.DXGI.Adapter3 _dxgiAdapter;
 
         // Direct3D interop objects.
-        private IDirect3DDevice                 d3dInteropDevice;
+        private IDirect3DDevice _d3DInteropDevice;
 
         // Direct2D factories.
-        private SharpDX.Direct2D1.Factory2      d2dFactory;
-        private SharpDX.DirectWrite.Factory1    dwriteFactory;
-        private SharpDX.WIC.ImagingFactory2     wicFactory;
+        private SharpDX.Direct2D1.Factory2 _d2DFactory;
+        private SharpDX.DirectWrite.Factory1 _dwriteFactory;
+        private SharpDX.WIC.ImagingFactory2 _wicFactory;
 
         // The holographic space provides a preferred DXGI adapter ID.
-        private HolographicSpace                holographicSpace = null;
+        private HolographicSpace _holographicSpace;
 
         // Properties of the Direct3D device currently in use.
-        private FeatureLevel                    d3dFeatureLevel = FeatureLevel.Level_10_0;
+        private FeatureLevel _d3DFeatureLevel = FeatureLevel.Level_10_0;
 
-        // Whether or not the current Direct3D device supports the optional feature 
+        // Whether or not the current Direct3D device supports the optional feature
         // for setting the render target array index from the vertex shader stage.
-        bool                                    d3dDeviceSupportsVprt = false;
+        private bool _d3DDeviceSupportsVprt;
 
         // Back buffer resources, etc. for attached holographic cameras.
-        private Dictionary<uint, CameraResources> cameraResourcesDictionary = new Dictionary<uint, CameraResources>();
-        private Object                          cameraResourcesLock = new Object();
+        private readonly Dictionary<uint, CameraResources> _cameraResourcesDictionary = new Dictionary<uint, CameraResources>();
+        private readonly object cameraResourcesLock = new object();
 
         /// <summary>
         /// Constructor for DeviceResources.
         /// </summary>
-        public DeviceResources()
-        {
+        public DeviceResources() {
             CreateDeviceIndependentResources();
         }
 
         /// <summary>
         /// Configures resources that don't depend on the Direct3D device.
         /// </summary>
-        private void CreateDeviceIndependentResources()
-        {
+        private void CreateDeviceIndependentResources() {
             // Dispose previous references and set to null
-            this.RemoveAndDispose(ref d2dFactory);
-            this.RemoveAndDispose(ref dwriteFactory);
-            this.RemoveAndDispose(ref wicFactory);
+            this.RemoveAndDispose(ref _d2DFactory);
+            this.RemoveAndDispose(ref _dwriteFactory);
+            this.RemoveAndDispose(ref _wicFactory);
 
             // Initialize Direct2D resources.
             var debugLevel = SharpDX.Direct2D1.DebugLevel.None;
 #if DEBUG
-            if (DirectXHelper.SdkLayersAvailable())
-            {
+            if(DirectXHelper.SdkLayersAvailable()) {
                 debugLevel = SharpDX.Direct2D1.DebugLevel.Information;
             }
 #endif
 
             // Initialize the Direct2D Factory.
-            d2dFactory = this.ToDispose(
+            _d2DFactory = this.ToDispose(
                 new SharpDX.Direct2D1.Factory2(
                     SharpDX.Direct2D1.FactoryType.SingleThreaded,
                     debugLevel
@@ -83,75 +79,66 @@ namespace FirstHoloApp.Common
                 );
 
             // Initialize the DirectWrite Factory.
-            dwriteFactory = this.ToDispose(
+            _dwriteFactory = this.ToDispose(
                 new SharpDX.DirectWrite.Factory1(SharpDX.DirectWrite.FactoryType.Shared)
                 );
 
             // Initialize the Windows Imaging Component (WIC) Factory.
-            wicFactory = this.ToDispose(
+            _wicFactory = this.ToDispose(
                 new SharpDX.WIC.ImagingFactory2()
                 );
         }
 
-        public void SetHolographicSpace(HolographicSpace holographicSpace)
-        {
+        public void SetHolographicSpace(HolographicSpace holographicSpace) {
             // Cache the holographic space. Used to re-initalize during device-lost scenarios.
-            this.holographicSpace = holographicSpace;
+            this._holographicSpace = holographicSpace;
 
             InitializeUsingHolographicSpace();
         }
 
-        public void InitializeUsingHolographicSpace()
-        {
+        public void InitializeUsingHolographicSpace() {
+
             // The holographic space might need to determine which adapter supports
             // holograms, in which case it will specify a non-zero PrimaryAdapterId.
-            int shiftPos = sizeof(uint);
-            ulong id = (ulong)holographicSpace.PrimaryAdapterId.LowPart | (((ulong)holographicSpace.PrimaryAdapterId.HighPart) << shiftPos);
+            var shiftPos = sizeof(uint);
+            var id = _holographicSpace.PrimaryAdapterId.LowPart | (((ulong)_holographicSpace.PrimaryAdapterId.HighPart) << shiftPos);
 
             // When a primary adapter ID is given to the app, the app should find
             // the corresponding DXGI adapter and use it to create Direct3D devices
             // and device contexts. Otherwise, there is no restriction on the DXGI
             // adapter the app can use.
-            if (id != 0)
-            {
+            if(id != 0) {
                 // Create the DXGI factory.
-                using (var dxgiFactory4 = new SharpDX.DXGI.Factory4())
-                {
+                using(var dxgiFactory4 = new SharpDX.DXGI.Factory4()) {
                     // Retrieve the adapter specified by the holographic space.
                     IntPtr adapterPtr;
-                    dxgiFactory4.EnumAdapterByLuid((long)id, InteropStatics.IDXGIAdapter3, out adapterPtr);
+                    dxgiFactory4.EnumAdapterByLuid((long)id, InteropStatics.IdxgiAdapter3, out adapterPtr);
 
-                    if (adapterPtr != IntPtr.Zero)
-                    {
-                        dxgiAdapter = new SharpDX.DXGI.Adapter3(adapterPtr);
+                    if(adapterPtr != IntPtr.Zero) {
+                        _dxgiAdapter = new SharpDX.DXGI.Adapter3(adapterPtr);
                     }
                 }
-            }
-            else
-            {
-                this.RemoveAndDispose(ref dxgiAdapter);
+            } else {
+                this.RemoveAndDispose(ref _dxgiAdapter);
             }
 
             CreateDeviceResources();
 
-            holographicSpace.SetDirect3D11Device(d3dInteropDevice);
+            _holographicSpace.SetDirect3D11Device(_d3DInteropDevice);
         }
-
 
         /// <summary>
         /// Configures the Direct3D device, and stores handles to it and the device context.
         /// </summary>
-        private void CreateDeviceResources()
-        {
+        private void CreateDeviceResources() {
             DisposeDeviceAndContext();
 
-            // This flag adds support for surfaces with a different color channel ordering
+            // This flag adds support for surfaces with a different Color channel ordering
             // than the API default. It is required for compatibility with Direct2D.
-            DeviceCreationFlags creationFlags = DeviceCreationFlags.BgraSupport;
+            var creationFlags = DeviceCreationFlags.BgraSupport;
 
 #if DEBUG
-            if (DirectXHelper.SdkLayersAvailable())
-            {
+            if(DirectXHelper.SdkLayersAvailable()) {
                 // If the project is in a debug build, enable debugging via SDK Layers with this flag.
                 creationFlags |= DeviceCreationFlags.Debug;
             }
@@ -172,79 +159,66 @@ namespace FirstHoloApp.Common
             };
 
             // Create the Direct3D 11 API device object and a corresponding context.
-            try
-            {
-                if (null != dxgiAdapter)
-                {
-                    using (var device = new Device(dxgiAdapter, creationFlags, featureLevels))
-                    {
+            try {
+                if(null != _dxgiAdapter) {
+                    using(var device = new Device(_dxgiAdapter, creationFlags, featureLevels)) {
                         // Store pointers to the Direct3D 11.1 API device.
-                        d3dDevice = this.ToDispose(device.QueryInterface<Device3>());
+                        _d3DDevice = this.ToDispose(device.QueryInterface<Device3>());
                     }
-                }
-                else
-                {
-                    using (var device = new Device(DriverType.Hardware, creationFlags, featureLevels))
-                    {
+                } else {
+                    using(var device = new Device(DriverType.Hardware, creationFlags, featureLevels)) {
                         // Store a pointer to the Direct3D device.
-                        d3dDevice = this.ToDispose(device.QueryInterface<Device3>());
+                        _d3DDevice = this.ToDispose(device.QueryInterface<Device3>());
                     }
                 }
-            }
-            catch
-            {
+            } catch {
                 // If the initialization fails, fall back to the WARP device.
-                // For more information on WARP, see: 
+                // For more information on WARP, see:
                 // http://go.microsoft.com/fwlink/?LinkId=286690
-                using (var device = new Device(DriverType.Warp, creationFlags, featureLevels))
-                {
-                    d3dDevice = this.ToDispose(device.QueryInterface<Device3>());
+                using(var device = new Device(DriverType.Warp, creationFlags, featureLevels)) {
+                    _d3DDevice = this.ToDispose(device.QueryInterface<Device3>());
                 }
             }
 
             // Cache the feature level of the device that was created.
-            d3dFeatureLevel = d3dDevice.FeatureLevel;
+            _d3DFeatureLevel = _d3DDevice.FeatureLevel;
 
             // Store a pointer to the Direct3D immediate context.
-            d3dContext = this.ToDispose(d3dDevice.ImmediateContext3);
+            _d3DContext = this.ToDispose(_d3DDevice.ImmediateContext3);
 
             // Acquire the DXGI interface for the Direct3D device.
-            using (var dxgiDevice = d3dDevice.QueryInterface<SharpDX.DXGI.Device3>())
-            {
+            using(var dxgiDevice = _d3DDevice.QueryInterface<SharpDX.DXGI.Device3>()) {
                 // Wrap the native device using a WinRT interop object.
                 IntPtr pUnknown;
-                UInt32 hr = InteropStatics.CreateDirect3D11DeviceFromDXGIDevice(dxgiDevice.NativePointer, out pUnknown);
-                if (hr == 0)
-                {
-                    d3dInteropDevice = (IDirect3DDevice)Marshal.GetObjectForIUnknown(pUnknown);
+                var hr = InteropStatics.CreateDirect3D11DeviceFromDXGIDevice(dxgiDevice.NativePointer, out pUnknown);
+                if(hr == 0) {
+                    _d3DInteropDevice = (IDirect3DDevice)Marshal.GetObjectForIUnknown(pUnknown);
                     Marshal.Release(pUnknown);
                 }
 
                 // Store a pointer to the DXGI adapter.
                 // This is for the case of no preferred DXGI adapter, or fallback to WARP.
-                dxgiAdapter = this.ToDispose(dxgiDevice.Adapter.QueryInterface<SharpDX.DXGI.Adapter3>());
+                _dxgiAdapter = this.ToDispose(dxgiDevice.Adapter.QueryInterface<SharpDX.DXGI.Adapter3>());
             }
 
             // Check for device support for the optional feature that allows setting the render target array index from the vertex shader stage.
-            var options = d3dDevice.CheckD3D113Features3();
-            if (options.VPAndRTArrayIndexFromAnyShaderFeedingRasterizer)
-            {
-                d3dDeviceSupportsVprt = true;
+            var options = _d3DDevice.CheckD3D113Features3();
+            if(options.VPAndRTArrayIndexFromAnyShaderFeedingRasterizer) {
+                _d3DDeviceSupportsVprt = true;
             }
         }
 
         /// <summary>
         /// Disposes of a device-based resources.
         /// </summary>
-        private void DisposeDeviceAndContext()
-        {
+        private void DisposeDeviceAndContext() {
             // Dispose existing references to Direct3D 11 device and contxt, and set to null.
-            this.RemoveAndDispose(ref d3dDevice);
-            this.RemoveAndDispose(ref d3dContext);
-            this.RemoveAndDispose(ref dxgiAdapter);
+            this.RemoveAndDispose(ref _d3DDevice);
+            this.RemoveAndDispose(ref _d3DContext);
+            this.RemoveAndDispose(ref _dxgiAdapter);
 
             // Release the interop device.
-            d3dInteropDevice = null;
+            _d3DInteropDevice = null;
         }
 
         /// <summary>
@@ -252,12 +226,9 @@ namespace FirstHoloApp.Common
         /// resources for back buffers that have changed.
         /// Locks the set of holographic camera resources until the function exits.
         /// </summary>
-        public void EnsureCameraResources(HolographicFrame frame, HolographicFramePrediction prediction)
-        {
-            UseHolographicCameraResources((Dictionary<uint, CameraResources> cameraResourcesDictionary) =>
-            {
-                foreach (var pose in prediction.CameraPoses)
-                {
+        public void EnsureCameraResources(HolographicFrame frame, HolographicFramePrediction prediction) {
+            UseHolographicCameraResources(cameraResourcesDictionary => {
+                foreach(var pose in prediction.CameraPoses) {
                     var renderingParameters = frame.GetRenderingParameters(pose);
                     var cameraResources = cameraResourcesDictionary[pose.HolographicCamera.Id];
 
@@ -270,24 +241,19 @@ namespace FirstHoloApp.Common
         /// Prepares to allocate resources and adds resource views for a camera.
         /// Locks the set of holographic camera resources until the function exits.
         /// </summary>
-        public void AddHolographicCamera(HolographicCamera camera)
-        {
-            UseHolographicCameraResources((Dictionary<uint, CameraResources> cameraResourcesDictionary) =>
-            {
+        public void AddHolographicCamera(HolographicCamera camera) {
+            UseHolographicCameraResources(cameraResourcesDictionary => {
                 cameraResourcesDictionary.Add(camera.Id, new CameraResources(camera));
             });
         }
 
         // Deallocates resources for a camera and removes the camera from the set.
         // Locks the set of holographic camera resources until the function exits.
-        public void RemoveHolographicCamera(HolographicCamera camera)
-        {
-            UseHolographicCameraResources((Dictionary<uint, CameraResources> cameraResourcesDictionary) =>
-            {
-                CameraResources cameraResources = cameraResourcesDictionary[camera.Id];
+        public void RemoveHolographicCamera(HolographicCamera camera) {
+            UseHolographicCameraResources(cameraResourcesDictionary => {
+                var cameraResources = cameraResourcesDictionary[camera.Id];
 
-                if (null != cameraResources)
-                {
+                if(null != cameraResources) {
                     cameraResources.ReleaseResourcesForBackBuffer(this);
                     cameraResourcesDictionary.Remove(camera.Id);
                 }
@@ -298,34 +264,29 @@ namespace FirstHoloApp.Common
         /// Recreate all device resources and set them back to the current state.
         /// Locks the set of holographic camera resources until the function exits.
         /// </summary>
-        public void HandleDeviceLost()
-        {
-            DeviceLost.Invoke(this, null);
+        public void HandleDeviceLost() {
+            DeviceLost?.Invoke(this, null);
 
-            UseHolographicCameraResources((Dictionary<uint, CameraResources> cameraResourcesDictionary) =>
-            {
-                foreach (var pair in cameraResourcesDictionary)
-                {
-                    CameraResources cameraResources = pair.Value;
+            UseHolographicCameraResources(cameraResourcesDictionary => {
+                foreach(var pair in cameraResourcesDictionary) {
+                    var cameraResources = pair.Value;
                     cameraResources.ReleaseAllDeviceResources(this);
                 }
             });
 
             InitializeUsingHolographicSpace();
 
-            DeviceRestored.Invoke(this, null);
+            DeviceRestored?.Invoke(this, null);
         }
 
         /// <summary>
-        /// Call this method when the app suspends. It provides a hint to the driver that the app 
+        /// Call this method when the app suspends. It provides a hint to the driver that the app
         /// is entering an idle state and that temporary buffers can be reclaimed for use by other apps.
         /// </summary>
-        public void Trim()
-        {
-            d3dContext.ClearState();
+        public void Trim() {
+            _d3DContext.ClearState();
 
-            using (var dxgiDevice = d3dDevice.QueryInterface<SharpDX.DXGI.Device3>())
-            {
+            using(var dxgiDevice = _d3DDevice.QueryInterface<SharpDX.DXGI.Device3>()) {
                 dxgiDevice.Trim();
             }
         }
@@ -334,46 +295,44 @@ namespace FirstHoloApp.Common
         /// Present the contents of the swap chain to the screen.
         /// Locks the set of holographic camera resources until the function exits.
         /// </summary>
-        public void Present(ref HolographicFrame frame)
-        {
+        public void Present(ref HolographicFrame frame) {
             // By default, this API waits for the frame to finish before it returns.
-            // Holographic apps should wait for the previous frame to finish before 
+            // Holographic apps should wait for the previous frame to finish before
             // starting work on a new frame. This allows for better results from
             // holographic frame predictions.
             var presentResult = frame.PresentUsingCurrentPrediction(
                 HolographicFramePresentWaitBehavior.WaitForFrameToFinish
                 );
 
-            HolographicFramePrediction prediction = frame.CurrentPrediction;
-            UseHolographicCameraResources((Dictionary<uint, CameraResources> cameraResourcesDictionary) =>
-            {
-                foreach (var cameraPose in prediction.CameraPoses)
-                {
+            var prediction = frame.CurrentPrediction;
+            UseHolographicCameraResources(cameraResourcesDictionary => {
+                foreach(var cameraPose in prediction.CameraPoses) {
+
                     // This represents the device-based resources for a HolographicCamera.
-                    CameraResources cameraResources = cameraResourcesDictionary[cameraPose.HolographicCamera.Id];
+                    var cameraResources = cameraResourcesDictionary[cameraPose.HolographicCamera.Id];
 
                     // Discard the contents of the render target.
                     // This is a valid operation only when the existing contents will be
                     // entirely overwritten. If dirty or scroll rects are used, this call
                     // should be removed.
-                    d3dContext.DiscardView(cameraResources.BackBufferRenderTargetView);
+                    _d3DContext.DiscardView(cameraResources.BackBufferRenderTargetView);
 
                     // Discard the contents of the depth stencil.
-                    d3dContext.DiscardView(cameraResources.DepthStencilView);
+                    _d3DContext.DiscardView(cameraResources.DepthStencilView);
                 }
             });
 
             // The PresentUsingCurrentPrediction API will detect when the graphics device
             // changes or becomes invalid. When this happens, it is considered a Direct3D
             // device lost scenario.
-            if (presentResult == HolographicFramePresentResult.DeviceRemoved)
-            {
+            if(presentResult == HolographicFramePresentResult.DeviceRemoved) {
                 // The Direct3D device, context, and resources should be recreated.
                 HandleDeviceLost();
             }
         }
 
         public delegate void SwapChainAction(Dictionary<uint, CameraResources> cameraResourcesDictionary);
+
         public delegate bool SwapChainActionWithResult(Dictionary<uint, CameraResources> cameraResourcesDictionary);
 
         /// <summary>
@@ -381,16 +340,14 @@ namespace FirstHoloApp.Common
         /// callback to this function, and the std::map will be guarded from add and remove
         /// events until the callback returns. The callback is processed immediately and must
         /// not contain any nested calls to UseHolographicCameraResources.
-        /// The callback takes a parameter of type Dictionary<uint, CameraResources> cameraResourcesDictionary
+        /// The callback takes a parameter of type Dictionary<uint, CameraResources> _cameraResourcesDictionary
         /// through which the list of cameras will be accessed.
         /// The callback also returns a boolean result.
         /// </summary>
-        public bool UseHolographicCameraResources(SwapChainActionWithResult callback)
-        {
-            bool success = false;
-            lock(cameraResourcesLock)
-            {
-                success = callback(cameraResourcesDictionary);
+        public bool UseHolographicCameraResources(SwapChainActionWithResult callback) {
+            bool success;
+            lock(cameraResourcesLock) {
+                success = callback(_cameraResourcesDictionary);
             }
             return success;
         }
@@ -400,64 +357,25 @@ namespace FirstHoloApp.Common
         /// callback to this function, and the std::map will be guarded from add and remove
         /// events until the callback returns. The callback is processed immediately and must
         /// not contain any nested calls to UseHolographicCameraResources.
-        /// The callback takes a parameter of type Dictionary<uint, CameraResources> cameraResourcesDictionary
+        /// The callback takes a parameter of type Dictionary<uint, CameraResources> _cameraResourcesDictionary
         /// through which the list of cameras will be accessed.
         /// </summary>
-        public void UseHolographicCameraResources(SwapChainAction callback)
-        {
-            lock(cameraResourcesLock)
-            {
-                callback(cameraResourcesDictionary);
+        public void UseHolographicCameraResources(SwapChainAction callback) {
+            lock(cameraResourcesLock) {
+                callback(_cameraResourcesDictionary);
             }
         }
 
-#region Property accessors
-
-        public Device3 D3DDevice
-        {
-            get { return d3dDevice; }
-        }
-
-        public DeviceContext3 D3DDeviceContext
-        {
-            get { return d3dContext; }
-        }
-
-        public SharpDX.DXGI.Adapter3 DxgiAdapter
-        {
-            get { return dxgiAdapter; }
-        }
-
-        public IDirect3DDevice D3DInteropDevice
-        {
-            get { return d3dInteropDevice; }
-        }
-
-        public SharpDX.Direct2D1.Factory2 D2DFactory
-        {
-            get { return d2dFactory; }
-        }
-
-        public SharpDX.DirectWrite.Factory1 DWriteFactory
-        {
-            get { return dwriteFactory; }
-        }
-
-        public SharpDX.WIC.ImagingFactory2 WicImagingFactory
-        {
-            get { return wicFactory; }
-        }
-
-        public SharpDX.Direct3D.FeatureLevel D3DDeviceFeatureLevel
-        {
-            get { return d3dFeatureLevel; }
-        }
-
-        public bool D3DDeviceSupportsVprt
-        {
-            get { return d3dDeviceSupportsVprt; }
-        }
-        
+        #region Property accessors
+        public Device3 D3DDevice => _d3DDevice;
+        public DeviceContext3 D3DDeviceContext => _d3DContext;
+        public SharpDX.DXGI.Adapter3 DxgiAdapter => _dxgiAdapter;
+        public IDirect3DDevice D3DInteropDevice => _d3DInteropDevice;
+        public SharpDX.Direct2D1.Factory2 D2DFactory => _d2DFactory;
+        public SharpDX.DirectWrite.Factory1 DWriteFactory => _dwriteFactory;
+        public SharpDX.WIC.ImagingFactory2 WicImagingFactory => _wicFactory;
+        public FeatureLevel D3DDeviceFeatureLevel => _d3DFeatureLevel;
+        public bool D3DDeviceSupportsVprt => _d3DDeviceSupportsVprt;
         #endregion
     }
 }
