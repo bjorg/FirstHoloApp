@@ -15,7 +15,6 @@ using Windows.Perception.Spatial;
 
 using FirstHoloApp.Common;
 using System.Threading.Tasks;
-using Windows.Foundation;
 
 #if DRAW_SAMPLE_CONTENT
 
@@ -38,10 +37,10 @@ namespace FirstHoloApp {
 #endif
 
         // Cached reference to device resources.
-        private readonly DeviceResources deviceResources;
+        private readonly DeviceResources _deviceResources;
 
         // Render loop timer.
-        private readonly StepTimer timer = new StepTimer();
+        private readonly StepTimer _timer = new StepTimer();
 
         // Represents the holographic space around the user.
         private HolographicSpace _holographicSpace;
@@ -57,11 +56,11 @@ namespace FirstHoloApp {
         /// </summary>
         /// <param name="deviceResources"></param>
         public FirstHoloAppMain(DeviceResources deviceResources) {
-            this.deviceResources = deviceResources;
+            this._deviceResources = deviceResources;
 
             // Register to be notified if the Direct3D device is lost.
-            this.deviceResources.DeviceLost += this.OnDeviceLost;
-            this.deviceResources.DeviceRestored += this.OnDeviceRestored;
+            this._deviceResources.DeviceLost += this.OnDeviceLost;
+            this._deviceResources.DeviceRestored += this.OnDeviceRestored;
         }
 
         public void SetHolographicSpace(HolographicSpace holographicSpace) {
@@ -73,7 +72,7 @@ namespace FirstHoloApp {
 
 #if DRAW_SAMPLE_CONTENT
             // Initialize the sample hologram.
-            _spinningCubeRenderer = new SpinningCubeRenderer(deviceResources);
+            _spinningCubeRenderer = new SpinningCubeRenderer(_deviceResources);
 
             _spatialInputHandler = new SpatialInputHandler();
 #endif
@@ -131,6 +130,7 @@ namespace FirstHoloApp {
         /// Updates the application state once per frame.
         /// </summary>
         public HolographicFrame Update() {
+
             // Before doing the timer update, there is some work to do per-frame
             // to maintain holographic rendering. First, we will get information
             // about the current frame.
@@ -146,7 +146,7 @@ namespace FirstHoloApp {
 
             // Back buffers can change from frame to frame. Validate each buffer, and recreate
             // resource views and depth buffers as needed.
-            deviceResources.EnsureCameraResources(holographicFrame, prediction);
+            _deviceResources.EnsureCameraResources(holographicFrame, prediction);
 
             // Next, we get a coordinate system from the attached frame of reference that is
             // associated with the current frame. Later, this coordinate system is used for
@@ -154,6 +154,7 @@ namespace FirstHoloApp {
             var currentCoordinateSystem = _referenceFrame.CoordinateSystem;
 
 #if DRAW_SAMPLE_CONTENT
+
             // Check for new input state since the last frame.
             var pointerState = _spatialInputHandler.CheckForInput();
             if(null != pointerState) {
@@ -165,7 +166,7 @@ namespace FirstHoloApp {
             }
 #endif
 
-            timer.Tick(() => {
+            _timer.Tick(() => {
                 //
                 // TODO: Update scene objects.
                 //
@@ -175,7 +176,7 @@ namespace FirstHoloApp {
                 //
 
 #if DRAW_SAMPLE_CONTENT
-                _spinningCubeRenderer.Update(timer);
+                _spinningCubeRenderer.Update(_timer);
 #endif
             });
 
@@ -183,6 +184,7 @@ namespace FirstHoloApp {
             // to set the focus point.
             foreach(var cameraPose in prediction.CameraPoses) {
 #if DRAW_SAMPLE_CONTENT
+
                 // The HolographicCameraRenderingParameters class provides access to set
                 // the image stabilization parameters.
                 var renderingParameters = holographicFrame.GetRenderingParameters(cameraPose);
@@ -215,7 +217,7 @@ namespace FirstHoloApp {
         public bool Render(ref HolographicFrame holographicFrame) {
 
             // Don't try to render anything before the first Update.
-            if(timer.FrameCount == 0) {
+            if(_timer.FrameCount == 0) {
                 return false;
             }
 
@@ -234,7 +236,7 @@ namespace FirstHoloApp {
 
             // Lock the set of holographic camera resources, then draw to each camera
             // in this frame.
-            return deviceResources.UseHolographicCameraResources(
+            return _deviceResources.UseHolographicCameraResources(
                 cameraResourceDictionary => {
                     var atLeastOneCameraRendered = false;
 
@@ -244,7 +246,7 @@ namespace FirstHoloApp {
                         var cameraResources = cameraResourceDictionary[cameraPose.HolographicCamera.Id];
 
                         // Get the device context.
-                        var context = deviceResources.D3DDeviceContext;
+                        var context = _deviceResources.D3DDeviceContext;
                         var renderTargetView = cameraResources.BackBufferRenderTargetView;
                         var depthStencilView = cameraResources.DepthStencilView;
 
@@ -281,10 +283,10 @@ namespace FirstHoloApp {
                         // The view and projection matrices for each holographic camera will change
                         // every frame. This function refreshes the data in the constant buffer for
                         // the holographic camera indicated by cameraPose.
-                        cameraResources.UpdateViewProjectionBuffer(deviceResources, cameraPose, _referenceFrame.CoordinateSystem);
+                        cameraResources.UpdateViewProjectionBuffer(_deviceResources, cameraPose, _referenceFrame.CoordinateSystem);
 
                         // Attach the view/projection constant buffer for this camera to the graphics pipeline.
-                        var cameraActive = cameraResources.AttachViewProjectionBuffer(deviceResources);
+                        var cameraActive = cameraResources.AttachViewProjectionBuffer(_deviceResources);
 
 #if DRAW_SAMPLE_CONTENT
                         // Only render world-locked content when positional tracking is active.
@@ -341,7 +343,7 @@ namespace FirstHoloApp {
             case SpatialLocatability.Unavailable:
                 // Holograms cannot be rendered.
                 {
-                    String message = "Warning! Positional tracking is " + sender.Locatability + ".";
+                    var message = "Warning! Positional tracking is " + sender.Locatability + ".";
                     Debug.WriteLine(message);
                 }
                 break;
@@ -369,10 +371,10 @@ namespace FirstHoloApp {
             HolographicSpace sender,
             HolographicSpaceCameraAddedEventArgs args
         ) {
-            Deferral deferral = args.GetDeferral();
-            HolographicCamera holographicCamera = args.Camera;
+            var deferral = args.GetDeferral();
+            var holographicCamera = args.Camera;
 
-            Task task1 = new Task(() => {
+            var task1 = new Task(() => {
                 //
                 // TODO: Allocate resources for the new camera and load any content specific to
                 //       that camera. Note that the render target size (in pixels) is a property
@@ -388,7 +390,7 @@ namespace FirstHoloApp {
                 //   * A subsequent Update will take the back buffer from the RenderingParameters of this
                 //     camera's CameraPose and use it to create the ID3D11RenderTargetView for this camera.
                 //     Content can then be rendered for the HolographicCamera.
-                deviceResources.AddHolographicCamera(holographicCamera);
+                _deviceResources.AddHolographicCamera(holographicCamera);
 
                 // Holographic frame predictions will not include any information about this camera until
                 // the deferral is completed.
@@ -401,7 +403,7 @@ namespace FirstHoloApp {
             HolographicSpace sender,
             HolographicSpaceCameraRemovedEventArgs args
         ) {
-            Task task2 = new Task(() => {
+            var task2 = new Task(() => {
                 //
                 // TODO: Asynchronously unload or deactivate content resources (not back buffer
                 //       resources) that are specific only to the camera that was removed.
@@ -415,7 +417,7 @@ namespace FirstHoloApp {
             // waits until it can get a lock on the set of holographic camera resources before
             // deallocating resources for this camera. At 60 frames per second this wait should
             // not take long.
-            deviceResources.RemoveHolographicCamera(args.Camera);
+            _deviceResources.RemoveHolographicCamera(args.Camera);
         }
     }
 }
